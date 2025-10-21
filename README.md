@@ -42,7 +42,7 @@ Siga os passos abaixo para configurar e rodar o projeto em sua máquina local.
 
 1.  **Clone o repositório:**
     ```bash
-    git clone [https://github.com/LucasSalees/contador-de-polichinelos.git](https://github.com/LucasSalees/contador-de-polichinelos.git)
+    git clone https://github.com/LucasSalees/contador-de-polichinelos.git
     ```
     *(Observação: altere `contador-de-polichinelos` se o nome do seu repositório no GitHub for diferente)*
 
@@ -72,7 +72,7 @@ Siga os passos abaixo para configurar e rodar o projeto em sua máquina local.
 
 Com o ambiente virtual ativado, execute o script principal:
 ```bash
-python system.py
+python main.py
 ```
 Uma janela com a imagem da sua webcam aparecerá. Posicione-se de forma que seu corpo inteiro seja visível e comece a fazer os polichinelos. O contador será atualizado na tela.
 
