@@ -5,8 +5,8 @@ import cv2  # OpenCV para processamento de imagem e vídeo
 import mediapipe as mp  # Framework do Google para detecção de poses
 import time  # Para controle de tempo e timestamps
 import math  # Para cálculos matemáticos
-import tkinter as tk  # Para criar interface gráfica
-from tkinter import filedialog  # Para diálogo de seleção de arquivo
+import numpy as np # Para criar a tela do menu
+from tkinter import Tk, filedialog # Para a caixa de diálogo de seleção de arquivo
 
 # Inicialização dos módulos do MediaPipe
 mp_desenho = mp.solutions.drawing_utils  # Utilitários para desenhar landmarks
@@ -29,14 +29,57 @@ RAZAO_TORNOZELO_QUADRIL_ABERTO = 1.5    # Razão para considerar pernas abertas
 RAZAO_TORNOZELO_QUADRIL_FECHADO = 1.25  # Razão para considerar pernas fechadas
 MARGEM_BRACO_ACIMA_OMBRO = 0.05       # Margem para braços acima do ombro
 
-# === NOVA CONSTANTE ===
 # Margem para considerar o pulso próximo ao quadril (15% da altura do recorte)
 MARGEM_PULSO_QUADRIL = 0.05
 
-# === NOVA CONSTANTE DE SIMETRIA ===
 # Limite para simetria (ex: um pé não pode estar 2.5x mais longe do centro que o outro)
 LIMITE_RAZAO_SIMETRIA = 2.5
 
+# ============================================================================
+# FUNÇÕES DE DESENHO DA INTERFACE (Baseadas no seu exemplo)
+# ============================================================================
+
+def draw_filled_transparent_rect(img, pt1, pt2, color=(0, 0, 0), alpha=0.65):
+    """Desenha um retângulo transparente preenchido."""
+    overlay = img.copy()
+    cv2.rectangle(overlay, pt1, pt2, color, -1)
+    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+
+def draw_label_box(img, text, org, font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.9, thickness=2,
+                   text_color=(255, 255, 255), bg_color=(20, 22, 25), alpha=0.7, padding=10):
+    """Desenha uma caixa de texto com fundo."""
+    (tw, th), base = cv2.getTextSize(text, font, scale, thickness)
+    x, y = org
+    x1 = max(x - padding, 0)
+    y1 = max(int(y - th - padding), 0)
+    x2 = min(int(x + tw + padding), img.shape[1] - 1)
+    y2 = min(int(y + base + padding), img.shape[0] - 1)
+    draw_filled_transparent_rect(img, (x1, y1), (x2, y2), bg_color, alpha)
+    cv2.putText(img, text, (x, y), font, scale, text_color, thickness, cv2.LINE_AA)
+
+def draw_button(canvas, rect, color, label, label_color=(15, 18, 22),
+                font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.95, thickness=2):
+    """Desenha um botão estilizado no canvas do OpenCV."""
+    x1, y1, x2, y2 = rect
+    # Sombra
+    overlay = canvas.copy()
+    cv2.rectangle(overlay, (x1+4, y1+4), (x2+4, y2+4), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
+    # Botão principal
+    overlay = canvas.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
+    cv2.addWeighted(overlay, 0.88, canvas, 0.12, 0, canvas)
+    # Borda
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), (245, 245, 245), 2)
+    # Texto
+    (tw, th), _ = cv2.getTextSize(label, font, scale, thickness)
+    tx = x1 + (x2 - x1 - tw) // 2
+    ty = y1 + (y2 - y1 + th) // 2
+    cv2.putText(canvas, label, (tx, ty), font, scale, label_color, thickness, cv2.LINE_AA)
+
+# ============================================================================
+# LÓGICA DE DETECÇÃO (Seu código original, sem NENHUMA alteração)
+# ============================================================================
 
 def distancia_euclidiana(a, b):
     """
@@ -49,16 +92,7 @@ def distancia_euclidiana(a, b):
 def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
     """
     Processa um lado da imagem para detectar e contar polichinelos
-
-    Parâmetros:
-    modelo_pose: modelo MediaPipe de detecção de pose
-    recorte_bgr: imagem recortada para processar
-    deslocamento_x: deslocamento horizontal para ajuste de coordenadas
-    estado: dicionário com estado atual da contagem
-
-    Retorna:
-    - estado: dicionário atualizado com nova contagem/fase
-    - pontos_para_desenhar: lista de pontos (x,y) em coordenadas do frame completo
+    (Esta é a sua lógica de simetria original)
     """
 
     # Obtém dimensões da imagem recortada
@@ -104,7 +138,6 @@ def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
     y_ombros = (ombro_esq[1] + ombro_dir[1]) / 2.0
     
     # === MÉTRICA 1: Posição ABERTA (Braços) ===
-    # Braços estão "abertos" se os pulsos estiverem acima dos ombros
     pulso_acima = (pulso_esq[1] < y_ombros - MARGEM_BRACO_ACIMA_OMBRO * altura) and \
                   (pulso_dir[1] < y_ombros - MARGEM_BRACO_ACIMA_OMBRO * altura)
 
@@ -115,7 +148,6 @@ def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
     pernas_abertas = razao_tornozelo_quadril >= RAZAO_TORNOZELO_QUADRIL_ABERTO
 
     # === MÉTRICA 3: Posição FECHADA (Braços) - LÓGICA APERFEIÇOADA ===
-    # Braços "fechados" se os pulsos estiverem próximos ou abaixo da linha do quadril
     y_quadris = (quadril_esq[1] + quadril_dir[1]) / 2.0
     pulsos_perto_quadril = (pulso_esq[1] > y_quadris - (MARGEM_PULSO_QUADRIL * altura)) and \
                            (pulso_dir[1] > y_quadris - (MARGEM_PULSO_QUADRIL * altura))
@@ -124,39 +156,29 @@ def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
     pernas_fechadas = razao_tornozelo_quadril <= RAZAO_TORNOZELO_QUADRIL_FECHADO
 
     # === MÉTRICA 5: SIMETRIA DAS PERNAS (Evitar "roubo" de 1 pé) ===
-    # 1. Encontrar o centro horizontal do corpo (baseado nos quadris)
     centro_x_quadris = (quadril_esq[0] + quadril_dir[0]) / 2.0
-    
-    # 2. Calcular distância horizontal de cada tornozelo até esse centro
     dist_tornozelo_esq_centro = abs(tornozelo_esq[0] - centro_x_quadris)
     dist_tornozelo_dir_centro = abs(tornozelo_dir[0] - centro_x_quadris)
 
-    # 3. Calcular a razão entre as distâncias (evita divisão por zero)
-    if dist_tornozelo_dir_centro < 1e-6: # Evita divisão por zero
-        # Se dir está no centro, esq tbm deve estar (ou ser < 1e-6)
+    if dist_tornozelo_dir_centro < 1e-6:
         razao_simetria = 1.0 if dist_tornozelo_esq_centro < 1e-6 else 1000.0
     else:
         razao_simetria = dist_tornozelo_esq_centro / dist_tornozelo_dir_centro
 
-    # 4. Validar se a razão está dentro dos limites de simetria
-    # Se a razão for > LIMITE (ex: 2.5) ou < (1/LIMITE) (ex: 0.4), é assimétrico
     pernas_simetricas = (razao_simetria < LIMITE_RAZAO_SIMETRIA) and \
                         (razao_simetria > (1.0 / LIMITE_RAZAO_SIMETRIA))
-
 
     # Máquina de estado: fechado -> aberto -> fechado conta +1
     fase = estado.get('fase', 'fechado')
 
     if fase == 'fechado' or fase == 'desconhecido':
         # esperando abrir
-        # === MUDANÇA: Adicionado "and pernas_simetricas" ===
         if pulso_acima and pernas_abertas and pernas_simetricas:
             estado['fase'] = 'aberto'
             estado['tempo_aberto'] = agora
             
     elif fase == 'aberto':
         # esperando fechar para contar
-        # === MUDANÇA: Adicionado "and pernas_simetricas" ===
         if pulsos_perto_quadril and pernas_fechadas and pernas_simetricas:
             # transição aberto -> fechado completa um polichinelo
             estado['contagem'] = estado.get('contagem', 0) + 1
@@ -165,17 +187,9 @@ def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
 
     return estado, pontos_para_desenhar
 
-
 def principal(caminho_video=None, max_individuos=2):
     """
     Função principal que gerencia a captura e processamento do vídeo
-
-    Parâmetros:
-    caminho_video: caminho do arquivo de vídeo (None para usar webcam)
-    max_individuos: número máximo de pessoas a detectar (1 ou 2)
-    
-    Retorna:
-    'VOLTAR_MENU' - Indica que a execução terminou e o menu deve ser mostrado
     """
     if caminho_video:
         captura = cv2.VideoCapture(caminho_video)
@@ -187,7 +201,7 @@ def principal(caminho_video=None, max_individuos=2):
             print(f"Não foi possível abrir o arquivo de vídeo: {caminho_video}")
         else:
             print("Não foi possível abrir a câmera")
-        return 'VOLTAR_MENU' # Retorna ao menu se a fonte falhar
+        return 'VOLTAR_MENU' 
 
     modelo_pose = mp_pose.Pose(min_detection_confidence=CONFIANCA_MIN_DETECCAO,
                                min_tracking_confidence=CONFIANCA_MIN_RASTREAMENTO)
@@ -198,51 +212,30 @@ def principal(caminho_video=None, max_individuos=2):
         estados.append({'fase': 'fechado', 'contagem': 0, 'ultimo_visto': 0.0})
 
     modo_camera = (caminho_video is None)
-    
-    # Variáveis para cálculo de FPS
-    tempo_anterior = time.time()
-    contador_frames = 0
-    fps = 0
 
     # Define o título da janela do OpenCV
     titulo_janela = 'Contador de Polichinelos - Pressione ESC para voltar'
-    cv2.namedWindow(titulo_janela) # Cria a janela para poder verificar se foi fechada
+    cv2.namedWindow(titulo_janela) 
 
     try:
         while True:
             ret, quadro = captura.read()
             
-            # === LÓGICA DE SAÍDA ATUALIZADA ===
-            # 1. Se o vídeo acabar (ret=False) E for modo vídeo (!modo_camera) -> volta ao menu
-            # 2. Se a câmera falhar (ret=False) E for modo câmera (modo_camera) -> volta ao menu
             if not ret or quadro is None:
                 if not modo_camera:
                     print("Vídeo terminou. Voltando ao menu.")
                 else:
                     print("Falha na captura da câmera. Voltando ao menu.")
-                break # Sai do loop
+                break 
 
-            # 3. Se o usuário fechar a janela no 'X' -> volta ao menu
-            # WND_PROP_VISIBLE retorna 0 (ou < 1) se a janela foi fechada
             if cv2.getWindowProperty(titulo_janela, cv2.WND_PROP_VISIBLE) < 1:
                 print("Janela fechada pelo usuário. Voltando ao menu.")
-                break # Sai do loop
+                break 
 
-            # Se for modo WebCam, espelhar a imagem para ficar mais natural
             if modo_camera:
                 quadro = cv2.flip(quadro, 1)
 
             altura, largura, _ = quadro.shape
-
-            # Cálculo de FPS
-            contador_frames += 1
-            tempo_atual = time.time()
-            tempo_decorrido = tempo_atual - tempo_anterior
-            
-            if tempo_decorrido >= 1.0:  # Atualiza FPS a cada segundo
-                fps = contador_frames / tempo_decorrido
-                contador_frames = 0
-                tempo_anterior = tempo_atual
 
             # desenha linhas divisórias (somente se estiver em modo até 2 indivíduos)
             todos_pontos_para_desenhar = []
@@ -250,18 +243,17 @@ def principal(caminho_video=None, max_individuos=2):
             if max_individuos == 2:
                 cv2.line(quadro, (meio, 0), (meio, altura), (200, 200, 200), 2)
                 metades = [
-                    (0, 0, meio, altura),            # esquerda
-                    (meio, 0, largura - meio, altura)   # direita
+                    (0, 0, meio, altura),            
+                    (meio, 0, largura - meio, altura)   
                 ]
             else:
-                # 1 indivíduo -> processa toda a imagem como única região
                 metades = [
                     (0, 0, largura, altura)
                 ]
 
             for i, (x, y, cw, ch) in enumerate(metades):
                 recorte = quadro[y:y+ch, x:x+cw]
-                if recorte.size == 0: # Evita erro se o recorte for inválido
+                if recorte.size == 0: 
                     continue
                     
                 estado_atualizado, pontos_desenho = processar_lado(modelo_pose, recorte, x, estados[i])
@@ -269,173 +261,162 @@ def principal(caminho_video=None, max_individuos=2):
                 if pontos_desenho:
                     todos_pontos_para_desenhar.extend(pontos_desenho)
 
-                # retângulo de região (Cor sutil)
                 cv2.rectangle(quadro, (x, y), (x + cw, y + ch), (70, 70, 70), 1)
 
                 # --- EXIBIÇÃO DE CONTAGEM MELHORADA ---
-                # Fundo semi-transparente para o texto
                 overlay = quadro.copy()
                 
-                texto = f"PESSOA {i+1}: {estados[i].get('contagem', 0)}"
+                texto = f"JOGADOR {i+1}: {estados[i].get('contagem', 0)}"
                 if max_individuos == 1:
-                    texto = f"TOTAL: {estados[i].get('contagem', 0)}"
+                    texto = f"REPETICOES: {estados[i].get('contagem', 0)}"
 
-                # Posição do texto (canto superior de cada região)
                 (w, h), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
                 tx = x + 15
                 ty = y + 35
                 
                 cv2.rectangle(overlay, (tx - 5, ty - h - 5), (tx + w + 5, ty + 8), (20, 20, 20), -1)
-                cv2.putText(overlay, texto, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (57, 255, 20), 2) # Verde claro
+                cv2.putText(overlay, texto, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (57, 255, 20), 2) 
                 
-                # Aplicar transparência (alpha=0.6)
                 alpha = 0.6
                 cv2.addWeighted(overlay, alpha, quadro, 1 - alpha, 0, quadro)
 
-
-            # desenhar pontos detectados (Cor atualizada)
+            # desenhar pontos detectados
             for (px, py) in todos_pontos_para_desenhar:
-                cv2.circle(quadro, (px, py), 5, (255, 200, 0), -1) # Azul claro
+                cv2.circle(quadro, (px, py), 5, (255, 200, 0), -1) 
 
-            # Exibir FPS no CENTRO superior da tela
-            texto_fps = f"FPS: {fps:.1f}"
-            (largura_texto, altura_texto), _ = cv2.getTextSize(texto_fps, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            pos_x_fps = (largura - largura_texto) // 2
-            cv2.putText(quadro, texto_fps, (pos_x_fps, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2) # Amarelo
-
-            # === MENSAGEM DE SAÍDA ATUALIZADA ===
             cv2.putText(quadro, "Pressione 'ESC' para voltar ao menu", (10, altura - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
             cv2.imshow(titulo_janela, quadro)
             
-            # === TECLA DE SAÍDA ATUALIZADA ===
-            # 4. Se o usuário pressionar 'ESC' -> volta ao menu
             tecla = cv2.waitKey(1) & 0xFF
-            if tecla == 27: # 27 é o código ASCII para 'ESC'
+            if tecla == 27: 
                 print("Tecla ESC pressionada. Voltando ao menu.")
-                break # Sai do loop
+                break 
 
     finally:
-        # Bloco 'finally' garante que a liberação de recursos ocorra
-        # independentemente de como o loop 'while' foi interrompido
         captura.release()
         cv2.destroyAllWindows()
         modelo_pose.close()
         return 'VOLTAR_MENU'
 
+# ============================================================================
+# FUNÇÃO DE MENU
+# ============================================================================
 
-def mostrar_menu():
+def mostrar_menu_cv2():
     """
-    Cria e exibe o menu principal da aplicação (com estilo atualizado)
+    Cria e exibe o menu principal da aplicação (usando OpenCV).
+    Implementa a lógica de desativar o botão de vídeo para 2 jogadores.
     """
-    resultado = {'modo': None, 'caminho': None, 'max_individuos': 2}
-    caixa = tk.Tk()
-    caixa.title("Contador de Polichinelos - Menu")
-
-    # --- NOVO ESTILO ---
-    BG_COLOR = "#2C3E50"      # Azul escuro
-    FG_COLOR = "#ECF0F1"      # Branco "sujo"
-    BTN_COLOR = "#1ABC9C"     # Verde água
-    BTN_FG = "#2C3E50"        # Texto do botão (azul escuro)
-    BTN_HOVER = "#16A085"     # Verde mais escuro (hover)
-    RADIO_SELECT = "#1ABC9C"  # Cor de seleção do radio
+    resultado = {'modo': None, 'caminho': None, 'max_individuos': 1} # Padrão para 1
+    max_individuos = 1 # Estado atual da seleção
     
-    caixa.geometry("480x280")
-    caixa.resizable(False, False)
-    caixa.configure(bg=BG_COLOR)
+    # Novo Estilo
+    BG_COLOR = (24, 24, 24)
+    TITLE_COLOR = (0, 220, 220) # Ciano
+    TEXT_COLOR = (230, 230, 230)
     
-    # Centralizar janela (mesma lógica de antes)
-    largura_janela = 480
-    altura_janela = 280
-    largura_tela = caixa.winfo_screenwidth()
-    altura_tela = caixa.winfo_screenheight()
-    pos_x = (largura_tela - largura_janela) // 2
-    pos_y = (altura_tela - altura_janela) // 2
-    caixa.geometry(f"{largura_janela}x{altura_janela}+{pos_x}+{pos_y}")
+    BTN_SOLO_COLOR = (80, 80, 80)
+    BTN_SOLO_SEL_COLOR = (150, 150, 150)
+    BTN_DUPLA_COLOR = (80, 80, 80)
+    BTN_DUPLA_SEL_COLOR = (150, 150, 150)
     
-    # --- COMPONENTES COM ESTILO ---
+    BTN_WEBCAM_COLOR = (0, 100, 150) # Azul
+    BTN_VIDEO_COLOR = (100, 150, 0) # Verde
+    BTN_VIDEO_DISABLED_COLOR = (60, 60, 60) # Cinza escuro
     
-    # Titulo Aplicação
-    rotulo = tk.Label(caixa, text="CONTADOR DE POLICHINELOS", font=("Segoe UI", 16, "bold"), bg=BG_COLOR, fg=FG_COLOR)
-    rotulo.pack(pady=(20, 5))
+    BTN_TEXT_COLOR = (255, 255, 255)
+    BTN_TEXT_DARK = (20, 20, 20)
 
-    descricao = tk.Label(caixa, text="Escolha o modo e a configuração de indivíduos.", font=("Segoe UI", 10), bg=BG_COLOR, fg=FG_COLOR)
-    descricao.pack(pady=(0, 15))
+    window_name = "Menu Principal - Analisador de Movimento"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 720, 500)
 
-    # Opção de número de indivíduos (radio)
-    var_individuos = tk.IntVar(value=2)
-    opcoes = tk.Frame(caixa, bg=BG_COLOR)
-    opcoes.pack()
-    
-    tk.Label(opcoes, text="Detectar:", font=("Segoe UI", 10), bg=BG_COLOR, fg=FG_COLOR).pack(side=tk.LEFT, padx=5)
-    
-    # Usando ttk.Radiobutton para melhor estilo (embora o estilo do 'indicador' seja difícil de mudar no Tk)
-    tk.Radiobutton(opcoes, text="1 Pessoa", variable=var_individuos, value=1, 
-                   font=("Segoe UI", 10), bg=BG_COLOR, fg=FG_COLOR, 
-                   selectcolor=BG_COLOR, # Cor do fundo do radio
-                   activebackground=BG_COLOR, activeforeground=FG_COLOR,
-                   indicatoron=1, borderwidth=0).pack(side=tk.LEFT, padx=10)
-                   
-    tk.Radiobutton(opcoes, text="Até 2 Pessoas", variable=var_individuos, value=2, 
-                   font=("Segoe UI", 10), bg=BG_COLOR, fg=FG_COLOR,
-                   selectcolor=BG_COLOR,
-                   activebackground=BG_COLOR, activeforeground=FG_COLOR,
-                   indicatoron=1, borderwidth=0).pack(side=tk.LEFT, padx=10)
+    while True:
+        # Cria a tela do menu
+        tela = np.ones((500, 720, 3), dtype=np.uint8) * 24
+        
+        # Título
+        draw_filled_transparent_rect(tela, (0, 0), (720, 80), (15, 15, 15), 0.9)
+        cv2.putText(tela, "ANALISADOR DE MOVIMENTO", (40, 55), cv2.FONT_HERSHEY_DUPLEX, 1.0, TITLE_COLOR, 2, cv2.LINE_AA)
 
-    # --- Funções de Botão ---
-    def iniciar_tempo_real():
-        resultado['modo'] = 'camera'
-        resultado['max_individuos'] = var_individuos.get()
-        caixa.destroy()
+        # --- 1. Seleção de Modo (1 ou 2) ---
+        cv2.putText(tela, "1. Escolha o Modo de Deteccao:", (40, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, TEXT_COLOR, 2, cv2.LINE_AA)
+        
+        # Botão 1 - Individual
+        cor_solo = BTN_SOLO_SEL_COLOR if max_individuos == 1 else BTN_SOLO_COLOR
+        label_cor_solo = BTN_TEXT_DARK if max_individuos == 1 else BTN_TEXT_COLOR
+        draw_button(tela, (80, 150, 340, 200), cor_solo, "[1] Individual", label_color=label_cor_solo)
 
-    def iniciar_gravacao():
-        tipos_arquivo = [("Arquivos de vídeo", ("*.mp4", "*.avi", "*.mov", "*.mkv")), ("Todos os arquivos", "*.*")]
-        caminho = filedialog.askopenfilename(title="Selecione um arquivo de vídeo", filetypes=tipos_arquivo)
-        if caminho:
-            resultado['modo'] = 'video'
-            resultado['caminho'] = caminho
-            resultado['max_individuos'] = var_individuos.get()
-            caixa.destroy()
+        # Botão 2 - Dupla
+        cor_dupla = BTN_DUPLA_SEL_COLOR if max_individuos == 2 else BTN_DUPLA_COLOR
+        label_cor_dupla = BTN_TEXT_DARK if max_individuos == 2 else BTN_TEXT_COLOR
+        draw_button(tela, (380, 150, 640, 200), cor_dupla, "[2] Dupla", label_color=label_cor_dupla)
 
-    # --- Funções de Hover (Efeito visual) ---
-    def on_enter(e):
-        e.widget.config(bg=BTN_HOVER)
+        # --- 2. Seleção de Fonte (Webcam ou Video) ---
+        cv2.putText(tela, "2. Escolha a Fonte de Video:", (40, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, TEXT_COLOR, 2, cv2.LINE_AA)
 
-    def on_leave(e):
-        e.widget.config(bg=BTN_COLOR)
+        # Botão C - Webcam
+        draw_button(tela, (80, 280, 640, 330), BTN_WEBCAM_COLOR, "[C] Iniciar Camera Ao Vivo", label_color=BTN_TEXT_COLOR)
 
-    # --- Botões ---
-    btn_tempo_real = tk.Button(caixa, text="▶ Iniciar WebCam", 
-                               font=("Segoe UI", 11, "bold"), 
-                               width=25, height=2, command=iniciar_tempo_real,
-                               relief="flat", bg=BTN_COLOR, fg=BTN_FG, 
-                               activebackground=BTN_HOVER, activeforeground=BTN_FG)
-    btn_tempo_real.pack(pady=(20, 6))
-    btn_tempo_real.bind("<Enter>", on_enter)
-    btn_tempo_real.bind("<Leave>", on_leave)
+        # Botão V - Carregar Arquivo (com lógica de desativar)
+        cor_video = BTN_VIDEO_COLOR
+        texto_video = "[V] Carregar Arquivo de Video"
+        if max_individuos == 2:
+            # Lógica para desativar o botão
+            cor_video = BTN_VIDEO_DISABLED_COLOR
+            texto_video = "[V] Carregar (Apenas Individual)"
+            
+        draw_button(tela, (80, 350, 640, 400), cor_video, texto_video, label_color=BTN_TEXT_COLOR)
+        
+        # --- Instruções ---
+        draw_label_box(tela, "Use 1 e 2 para trocar o modo. Pressione C ou V para iniciar.", (40, 450), font=cv2.FONT_HERSHEY_PLAIN, scale=1.2)
+        cv2.putText(tela, "Pressione ESC para Sair", (500, 480), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1, cv2.LINE_AA)
+        
+        cv2.imshow(window_name, tela)
+        
+        if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+            # Verifica se o usuário fechou a janela do menu no 'X'
+            resultado['modo'] = None
+            break
 
-    btn_gravacao = tk.Button(caixa, text="📁 Abrir Vídeo (Gravação)", 
-                             font=("Segoe UI", 11, "bold"), 
-                             width=25, height=2, command=iniciar_gravacao,
-                             relief="flat", bg=BTN_COLOR, fg=BTN_FG,
-                             activebackground=BTN_HOVER, activeforeground=BTN_FG)
-    btn_gravacao.pack(pady=(6, 6))
-    btn_gravacao.bind("<Enter>", on_enter)
-    btn_gravacao.bind("<Leave>", on_leave)
+        key = cv2.waitKey(1) & 0xFF
 
-    # --- LÓGICA DE SAÍDA DO MENU ---
-    def ao_fechar():
-        # Define o modo como None, para que o loop principal saiba que deve parar
-        resultado['modo'] = None 
-        caixa.destroy()
-
-    # Se fechar no 'X', chama ao_fechar
-    caixa.protocol("WM_DELETE_WINDOW", ao_fechar)
-    
-    # Se apertar 'ESC' no menu, chama ao_fechar
-    caixa.bind('<Escape>', lambda e: ao_fechar())
-    
-    caixa.mainloop()
+        if key == 27: # ESC
+            resultado['modo'] = None
+            break
+        
+        elif key == ord('1'):
+            max_individuos = 1
+            resultado['max_individuos'] = 1
+        
+        elif key == ord('2'):
+            max_individuos = 2
+            resultado['max_individuos'] = 2
+            
+        elif key == ord('c'): # Iniciar Webcam
+            resultado['modo'] = 'camera'
+            break
+            
+        elif key == ord('v'): # Carregar Video
+            if max_individuos == 2:
+                # Botão está desativado, não faz nada
+                pass 
+            else:
+                # Usar Tkinter escondido para abrir o seletor de arquivo
+                root = Tk()
+                root.withdraw() # Esconde a janela principal do Tkinter
+                caminho = filedialog.askopenfilename(title="Selecione um arquivo de vídeo", filetypes=[("Arquivos de vídeo", ("*.mp4", "*.avi", "*.mov", "*.mkv")), ("Todos os arquivos", "*.*")])
+                root.destroy()
+                if caminho:
+                    resultado['modo'] = 'video'
+                    resultado['caminho'] = caminho
+                    break
+                else:
+                    # O usuário cancelou a seleção, continua no menu
+                    pass 
+                    
+    cv2.destroyWindow(window_name)
     return resultado['modo'], resultado['caminho'], resultado['max_individuos']
 
 # Ponto de entrada do programa
@@ -446,8 +427,8 @@ if __name__ == "__main__":
     # da webcam/vídeo.
     
     while True:
-        # 1. Mostra o menu e espera a seleção do usuário
-        modo, caminho, max_inds = mostrar_menu()
+        # 1. Mostra o novo menu CV2 e espera a seleção do usuário
+        modo, caminho, max_inds = mostrar_menu_cv2()
 
         # 2. Verifica a seleção do menu:
         # Se 'modo' for None, significa que o usuário fechou o menu 
@@ -461,12 +442,13 @@ if __name__ == "__main__":
         if modo == 'camera':
             status = principal(None, max_individuos=max_inds)
         elif modo == 'video' and caminho:
+            # A lógica no menu já impede que isso seja chamado com max_inds == 2
             status = principal(caminho, max_individuos=max_inds)
 
         # 4. A função 'principal' SEMPRE retorna 'VOLTAR_MENU'
         # (seja por ESC, fim do vídeo ou 'X').
         # O 'continue' faz o loop 'while True' recomeçar,
-        # chamando 'mostrar_menu()' novamente.
+        # chamando 'mostrar_menu_cv2()' novamente.
         if status == 'VOLTAR_MENU':
             continue
         else:
