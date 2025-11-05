@@ -214,7 +214,7 @@ def principal(caminho_video=None, max_individuos=2):
     modo_camera = (caminho_video is None)
 
     # Define o título da janela do OpenCV
-    titulo_janela = 'Contador de Polichinelos - Pressione ESC para voltar'
+    titulo_janela = 'Contador de Polichinelos - ESC para voltar'
     cv2.namedWindow(titulo_janela) 
 
     try:
@@ -371,7 +371,7 @@ def mostrar_menu_cv2():
         
         # --- Instruções ---
         draw_label_box(tela, "Use 1 e 2 para trocar o modo. Pressione C ou V para iniciar.", (40, 450), font=cv2.FONT_HERSHEY_PLAIN, scale=1.2)
-        cv2.putText(tela, "Pressione ESC para Sair", (500, 480), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1, cv2.LINE_AA)
+        cv2.putText(tela, "ESC para Sair", (500, 480), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1, cv2.LINE_AA)
         
         cv2.imshow(window_name, tela)
         
