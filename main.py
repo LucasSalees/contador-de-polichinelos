@@ -1,3 +1,7 @@
+#Lucas Sales dos Santos - G788419
+#Giovanni Maciel Grechi - G76AEA3
+#Lucas Mateus Venâncio Rossi - R023575
+
 # Importação das bibliotecas necessárias
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # Suprime avisos do TensorFlow
@@ -13,30 +17,38 @@ mp_desenho = mp.solutions.drawing_utils  # Utilitários para desenhar landmarks
 mp_pose = mp.solutions.pose  # Módulo de detecção de pose
 
 # Definição dos pontos de referência (landmarks) do corpo (índices do MediaPipe)
-OMBRO_ESQUERDO = 11     # Ombro esquerdo
-OMBRO_DIREITO = 12      # Ombro direito
-PULSO_ESQUERDO = 15     # Pulso esquerdo
-PULSO_DIREITO = 16      # Pulso direito
-QUADRIL_ESQUERDO = 23   # Quadril esquerdo
-QUADRIL_DIREITO = 24    # Quadril direito
-TORNOZELO_ESQUERDO = 27 # Tornozelo esquerdo
-TORNOZELO_DIREITO = 28  # Tornozelo direito
-
-# Parâmetros de configuração para detecção
-CONFIANCA_MIN_DETECCAO = 0.5        # Confiança mínima para detecção
-CONFIANCA_MIN_RASTREAMENTO = 0.5    # Confiança mínima para tracking
-RAZAO_TORNOZELO_QUADRIL_ABERTO = 1.5    # Razão para considerar pernas abertas
-RAZAO_TORNOZELO_QUADRIL_FECHADO = 1.25  # Razão para considerar pernas fechadas
-MARGEM_BRACO_ACIMA_OMBRO = 0.05       # Margem para braços acima do ombro
-
-# Margem para considerar o pulso próximo ao quadril (15% da altura do recorte)
-MARGEM_PULSO_QUADRIL = 0.05
-
-# Limite para simetria (ex: um pé não pode estar 2.5x mais longe do centro que o outro)
-LIMITE_RAZAO_SIMETRIA = 2.5
+OMBRO_ESQUERDO = 11      # Ombro esquerdo
+OMBRO_DIREITO = 12       # Ombro direito
+PULSO_ESQUERDO = 15      # Pulso esquerdo
+PULSO_DIREITO = 16       # Pulso direito
+QUADRIL_ESQUERDO = 23    # Quadril esquerdo
+QUADRIL_DIREITO = 24     # Quadril direito
+TORNOZELO_ESQUERDO = 27  # Tornozelo esquerdo
+TORNOZELO_DIREITO = 28   # Tornozelo direito
 
 # ============================================================================
-# FUNÇÕES DE DESENHO DA INTERFACE (Baseadas no seu exemplo)
+# CONSTANTES DE DETECÇÃO
+# ============================================================================
+
+# Parâmetros de configuração para detecção
+CONFIANCA_MIN_DETECCAO = 0.5      # Confiança mínima para detecção
+CONFIANCA_MIN_RASTREAMENTO = 0.5  # Confiança mínima para tracking
+
+# Lógica individual de perna (Resolve "Roubo de 1 perna")
+RAZAO_PERNA_ABERTA = 1.8  # Perna aberta se > 1.8x a dist. centro-quadril
+RAZAO_PERNA_FECHADA = 1.1 # Perna fechada se < 1.1x a dist. centro-quadril
+
+MARGEM_BRACO_ACIMA_OMBRO = 0.05       # Margem para braços acima do ombro
+
+# Margem para considerar o pulso próximo ao quadril
+MARGEM_PULSO_QUADRIL = 0.05
+
+# Lógica de Timeout (Resolve "Movimento Pausado")
+# Se o usuário ficar mais de 2.0s na posição "aberto", o movimento é invalidado
+TIMEOUT_MOVIMENTO = 2.0
+
+# ============================================================================
+# FUNÇÕES DE DESENHO DA INTERFACE
 # ============================================================================
 
 def draw_filled_transparent_rect(img, pt1, pt2, color=(0, 0, 0), alpha=0.65):
@@ -78,7 +90,7 @@ def draw_button(canvas, rect, color, label, label_color=(15, 18, 22),
     cv2.putText(canvas, label, (tx, ty), font, scale, label_color, thickness, cv2.LINE_AA)
 
 # ============================================================================
-# LÓGICA DE DETECÇÃO (Seu código original, sem NENHUMA alteração)
+# LÓGICA DE DETECÇÃO
 # ============================================================================
 
 def distancia_euclidiana(a, b):
@@ -88,11 +100,13 @@ def distancia_euclidiana(a, b):
     """
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
+# ============================================================================
+# FUNÇÃO processar_lado
+# ============================================================================
 
 def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
     """
     Processa um lado da imagem para detectar e contar polichinelos
-    (Esta é a sua lógica de simetria original)
     """
 
     # Obtém dimensões da imagem recortada
@@ -134,56 +148,65 @@ def processar_lado(modelo_pose, recorte_bgr, deslocamento_x, estado):
     for p in (ombro_esq, ombro_dir, pulso_esq, pulso_dir, quadril_esq, quadril_dir, tornozelo_esq, tornozelo_dir):
         pontos_para_desenhar.append((p[0] + deslocamento_x, p[1]))
 
-    # --- MÉTRICAS E LÓGICA DE CONTAGEM ATUALIZADA ---
+    # --- MÉTRICAS E LÓGICA DE CONTAGEM ---
     y_ombros = (ombro_esq[1] + ombro_dir[1]) / 2.0
     
     # === MÉTRICA 1: Posição ABERTA (Braços) ===
     pulso_acima = (pulso_esq[1] < y_ombros - MARGEM_BRACO_ACIMA_OMBRO * altura) and \
                   (pulso_dir[1] < y_ombros - MARGEM_BRACO_ACIMA_OMBRO * altura)
 
-    # === MÉTRICA 2: Posição ABERTA (Pernas) ===
-    distancia_quadril = distancia_euclidiana(quadril_esq, quadril_dir) + 1e-6
-    distancia_tornozelos = distancia_euclidiana(tornozelo_esq, tornozelo_dir)
-    razao_tornozelo_quadril = distancia_tornozelos / distancia_quadril
-    pernas_abertas = razao_tornozelo_quadril >= RAZAO_TORNOZELO_QUADRIL_ABERTO
-
-    # === MÉTRICA 3: Posição FECHADA (Braços) - LÓGICA APERFEIÇOADA ===
+    # === MÉTRICA 3: Posição FECHADA (Braços) ===
     y_quadris = (quadril_esq[1] + quadril_dir[1]) / 2.0
     pulsos_perto_quadril = (pulso_esq[1] > y_quadris - (MARGEM_PULSO_QUADRIL * altura)) and \
                            (pulso_dir[1] > y_quadris - (MARGEM_PULSO_QUADRIL * altura))
 
-    # === MÉTRICA 4: Posição FECHADA (Pernas) ===
-    pernas_fechadas = razao_tornozelo_quadril <= RAZAO_TORNOZELO_QUADRIL_FECHADO
-
-    # === MÉTRICA 5: SIMETRIA DAS PERNAS (Evitar "roubo" de 1 pé) ===
+    # === MÉTRICAS 2 & 4: LÓGICA DE PERNAS INDIVIDUAIS ===
+    
+    # 1. Referências do corpo
+    distancia_quadril = distancia_euclidiana(quadril_esq, quadril_dir) + 1e-6
     centro_x_quadris = (quadril_esq[0] + quadril_dir[0]) / 2.0
+    dist_meio_quadril = (distancia_quadril / 2.0) + 1e-6
+
+    # 2. Distância de cada tornozelo ao centro
     dist_tornozelo_esq_centro = abs(tornozelo_esq[0] - centro_x_quadris)
     dist_tornozelo_dir_centro = abs(tornozelo_dir[0] - centro_x_quadris)
 
-    if dist_tornozelo_dir_centro < 1e-6:
-        razao_simetria = 1.0 if dist_tornozelo_esq_centro < 1e-6 else 1000.0
-    else:
-        razao_simetria = dist_tornozelo_esq_centro / dist_tornozelo_dir_centro
+    # 3. Verificar cada perna individualmente
+    perna_esq_aberta = (dist_tornozelo_esq_centro / dist_meio_quadril) > RAZAO_PERNA_ABERTA
+    perna_dir_aberta = (dist_tornozelo_dir_centro / dist_meio_quadril) > RAZAO_PERNA_ABERTA
+    perna_esq_fechada = (dist_tornozelo_esq_centro / dist_meio_quadril) < RAZAO_PERNA_FECHADA
+    perna_dir_fechada = (dist_tornozelo_dir_centro / dist_meio_quadril) < RAZAO_PERNA_FECHADA
 
-    pernas_simetricas = (razao_simetria < LIMITE_RAZAO_SIMETRIA) and \
-                        (razao_simetria > (1.0 / LIMITE_RAZAO_SIMETRIA))
-
-    # Máquina de estado: fechado -> aberto -> fechado conta +1
+    # 4. Definir estado geral (AMBAS devem estar no estado)
+    pernas_abertas = perna_esq_aberta and perna_dir_aberta
+    pernas_fechadas = perna_esq_fechada and perna_dir_fechada
+    
+    # === MÁQUINA DE ESTADO (Com Lógica de Timeout) ===
+    
     fase = estado.get('fase', 'fechado')
 
     if fase == 'fechado' or fase == 'desconhecido':
         # esperando abrir
-        if pulso_acima and pernas_abertas and pernas_simetricas:
+        if pulso_acima and pernas_abertas:
             estado['fase'] = 'aberto'
-            estado['tempo_aberto'] = agora
+            # Armazena o exato momento que abriu para o timeout
+            estado['tempo_inicio_fase_aberta'] = agora 
             
     elif fase == 'aberto':
-        # esperando fechar para contar
-        if pulsos_perto_quadril and pernas_fechadas and pernas_simetricas:
+        # Checagem 1: O usuário completou o movimento?
+        if pulsos_perto_quadril and pernas_fechadas:
             # transição aberto -> fechado completa um polichinelo
             estado['contagem'] = estado.get('contagem', 0) + 1
             estado['fase'] = 'fechado'
             estado['ultimo_tempo_contagem'] = agora
+        
+        # Checagem 2: O usuário "pausou" no meio (timeout)?
+        # (agora - tempo_que_abriu) > LIMITE
+        elif (agora - estado.get('tempo_inicio_fase_aberta', agora)) > TIMEOUT_MOVIMENTO:
+            # O usuário demorou demais para fechar.
+            # Reseta a fase para 'fechado' sem contar.
+            estado['fase'] = 'fechado'
+            # print(f"Jogador {deslocamento_x}: TIMEOUT, resetando.")
 
     return estado, pontos_para_desenhar
 
@@ -263,7 +286,7 @@ def principal(caminho_video=None, max_individuos=2):
 
                 cv2.rectangle(quadro, (x, y), (x + cw, y + ch), (70, 70, 70), 1)
 
-                # --- EXIBIÇÃO DE CONTAGEM MELHORADA ---
+                # --- EXIBIÇÃO DE CONTAGEM ---
                 overlay = quadro.copy()
                 
                 texto = f"JOGADOR {i+1}: {estados[i].get('contagem', 0)}"
@@ -359,7 +382,7 @@ def mostrar_menu_cv2():
         # Botão C - Webcam
         draw_button(tela, (80, 280, 640, 330), BTN_WEBCAM_COLOR, "[C] Iniciar Camera Ao Vivo", label_color=BTN_TEXT_COLOR)
 
-        # Botão V - Carregar Arquivo (com lógica de desativar)
+        # Botão V - Carregar Arquivo
         cor_video = BTN_VIDEO_COLOR
         texto_video = "[V] Carregar Arquivo de Video"
         if max_individuos == 2:
